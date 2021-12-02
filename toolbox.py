@@ -21,12 +21,12 @@ from pyflagsercontain import compute_cell_count
 defined = {'data':{}, 'data_funcs':[], 'helper':[], 'nonspectral_params':{}, 'spectral_params':{}}
 
 # Set working directories
-dir_export = config_dict['paths']['export_address']
+#dir_export = config_dict['paths']['export_address']
 
 # Load adjacency matrix
-print('Loading circuit',flush=True)
-adj = load_npz(config_dict['paths']['matrix_address']).toarray().astype(int)
-defined['data']['adj'] = 'adjacency matrix'
+#print('Loading circuit',flush=True)
+adj = load_npz("/home/paperspace/motifs/Tridy-fork/TriDy/data/mc2.npz").toarray().astype(int)
+#defined['data']['adj'] = 'adjacency matrix'
 
 
 # Dictionary of all parameters which can be considered
@@ -54,7 +54,7 @@ param_dict = {
 param_dict_inverse = {v: k for k, v in param_dict.items()}
 
 # Load the parameters to be considered
-param_names = config_dict['values']['selection_parameters']
+#param_names = config_dict['values']['selection_parameters']
 
 
 
@@ -66,8 +66,8 @@ print('Loading functions',flush=True)
 ##
 
 
-defined['data_funcs'].append('recompute_single(function, name, **args)')
-def recompute_single(function, name, **args):
+defined['data_funcs'].append('recompute_single(function, name, dir_export, **args)')
+def recompute_single(function, name, dir_export, **args):
 #  In: function, string
 # Out: none (exports numpy array)
     data = []
@@ -678,7 +678,7 @@ def bls_matrix(matrix, reverse_flow=False):
 ##
 
 # Compute the parameters if not use precomputed ones
-if config_dict['values']['recompute'] == "True":
+if False:
     if not os.path.exists(dir_export+'individual_parameters/'):
         print('ERROR: the folder '+dir_export+'individual_parameters/ does not exist')
     if not os.path.exists(dir_export+'individual_parameters_errors/'):
@@ -741,9 +741,9 @@ if config_dict['values']['recompute'] == "True":
 
 
 # Load the computed parameters into a dataframe
-param_files = [np.load(dir_export+'individual_parameters/'+param_dict_inverse[f]+'.npy',allow_pickle=True) for f in param_names]
-df = pd.DataFrame(np.column_stack(tuple(param_files)), columns = param_names)
-defined['data']['df'] = 'mc2 parameters'
+# param_files = [np.load(dir_export+'individual_parameters/'+param_dict_inverse[f]+'.npy',allow_pickle=True) for f in param_names]
+#df = pd.DataFrame(np.column_stack(tuple(param_files)), columns = param_names)
+# defined['data']['df'] = 'mc2 parameters'
 
 # biedge_data = {name:np.load(dir_export+'biedge_parameters/'+name+'.npy') for name in biedge_dict.keys()}
 # df4 = pd.DataFrame(data = biedge_data)
