@@ -15,9 +15,12 @@ import pandas as pd
 import networkx as nx
 import scipy.linalg
 from scipy.sparse import load_npz
+import scipy.sparse.csgraph as csgraph
 from numpy.linalg import inv
+from pathlib import Path
 import pyflagser
 from pyflagsercontain import compute_cell_count
+from pyflagsercount import flagser_count
 defined = {'data':{}, 'data_funcs':[], 'helper':[], 'nonspectral_params':{}, 'spectral_params':{}}
 
 # Set working directories
@@ -25,7 +28,7 @@ defined = {'data':{}, 'data_funcs':[], 'helper':[], 'nonspectral_params':{}, 'sp
 
 # Load adjacency matrix
 #print('Loading circuit',flush=True)
-adj = load_npz("/home/paperspace/motifs/Tridy-fork/TriDy/data/mc2.npz").toarray().astype(int)
+adj = load_npz("/gpfs/bbp.cscs.ch/project/proj9/bisimplices/santoro/TriDy/data/mc2.npz").toarray().astype(int)
 #defined['data']['adj'] = 'adjacency matrix'
 
 
@@ -70,6 +73,9 @@ defined['data_funcs'].append('recompute_single(function, name, dir_export, **arg
 def recompute_single(function, name, dir_export, **args):
 #  In: function, string
 # Out: none (exports numpy array)
+    target = dir_export+'individual_parameters/'+name+'.npy'
+    if Path(target).exists():
+        raise FileExistsError('File for ' + name + ' exists. Skipping.')
     data = []
     data_error = []
     for chief in range(len(adj)):
@@ -219,19 +225,52 @@ def permute_list_but_all(input_matrix, list_to_fix):
 ##
 
 defined['helper'].append('neighbourhood(v, matrix=adj)')
-def neighbourhood(v, matrix=adj):
+def neighbourhood(v, matrix=adj, which='all'):
 #  In: index
 # Out: list of neighbours
-    neighbours = np.unique(np.concatenate((np.nonzero(matrix[v])[0],np.nonzero(np.transpose(matrix)[v])[0])))
+    if which=='all':
+        neighbours = np.unique(np.concatenate((np.nonzero(matrix[v])[0],np.nonzero(np.transpose(matrix)[v])[0])))
+    elif which=='in':
+        neighbours = np.nonzero(np.transpose(matrix)[v])[0]
+    elif which=='out':
+        neighbours = np.nonzero(matrix[v])[0]
     neighbours.sort(kind='mergesort')
     return np.concatenate((np.array([v]),neighbours))
 
-defined['helper'].append('tribe(v)')
-def tribe(v, matrix=adj):
+defined['helper'].append('tribe(v, neuron_restriction, biggest_cc)')
+def tribe(v, matrix=adj, exclude_chief=False, neuron_restriction=None, restrict_to_biggest_cc=False, which='all', return_vertices=False):
 #  In: index
 # Out: adjacency matrix
-    nhbd = neighbourhood(v)
-    return matrix[np.ix_(nhbd,nhbd)]
+    nhbd = neighbourhood(v, which=which)
+    if exclude_chief:
+        nhbd = nhbd[1:]
+    if neuron_restriction is not None:
+        nhbd = np.array(np.intersect1d(nhbd, neuron_restriction))
+    if return_vertices:
+         if restrict_to_biggest_cc:
+             m, vertices = biggest_cc(matrix[np.ix_(nhbd, nhbd)], return_vertices=True)
+             nhbd = nhbd[vertices]
+         else:
+             m = matrix[np.ix_(nhbd, nhbd)]
+         return m, nhbd
+    return matrix[np.ix_(nhbd,nhbd)] if not restrict_to_biggest_cc else biggest_cc(matrix[np.ix_(nhbd, nhbd)])
+
+defined['helper'].append('biggest_cc(m)')
+def biggest_cc(m, return_vertices = False):
+# In: matrix
+# Out: submatrix fro biggest weakly cc
+    if m.shape[0]:
+        _, labels = csgraph.connected_components(m)
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        biggest_label = unique_labels[np.argmax(counts)]
+        vertices = np.nonzero(labels==biggest_label)[0]
+        if return_vertices:
+            return m[np.ix_(vertices, vertices)], vertices
+        return m[np.ix_(vertices, vertices)]
+    else:
+        if return_vertices:
+            return m, []
+        return m
 
 defined['helper'].append('top_chiefs(parameter, number=50, order_by_ascending=False)')
 def top_chiefs(parameter, number=50, order_by_ascending=False):
@@ -289,10 +328,10 @@ def cell_count_at_v0(matrix):
     return simplexcontainment[0]
 
 defined['helper'].append('euler_characteristic_chief(chief)')
-def euler_characteristic_chief(chief):
+def euler_characteristic_chief(chief, tribe_args={}):
 #  In: index
 # Out: integer
-    return euler_characteristic(tribe(chief))
+    return euler_characteristic(tribe(chief, **tribe_args))
 
 defined['helper'].append('euler_characteristic(matrix)')
 def euler_characteristic(matrix):
@@ -361,8 +400,8 @@ def spectrum_param(spectrum, parameter):
 defined['nonspectral_params']['tcc']=[]
 
 defined['nonspectral_params']['tcc'].append('tcc(chief_index)')
-def tcc(chief_index):
-    current_tribe = tribe(chief_index)
+def tcc(chief_index, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
     return tcc_adjacency(current_tribe, index=chief_index)
 
 defined['nonspectral_params']['tcc'].append('tcc_adjacency(matrix, index=0')
@@ -384,8 +423,8 @@ def tcc_adjacency(matrix, index=0):
 defined['nonspectral_params']['ccc']=[]
 
 defined['nonspectral_params']['ccc'].append('ccc(chief_index)')
-def ccc(chief_index):
-    current_tribe = tribe(chief_index)
+def ccc(chief_index, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
     return ccc_adjacency(current_tribe)
 
 defined['nonspectral_params']['ccc'].append('ccc_adjacency(matrix)')
@@ -404,10 +443,10 @@ def ccc_adjacency(matrix):
 defined['nonspectral_params']['dc']=[]
 
 defined['nonspectral_params']['dc'].append('dc(chief_index, coeff_index=2)')
-def dc(chief_index, coeff_index=2):
+def dc(chief_index, coeff_index=2, tribe_args={}):
 #  in: index
 # out: float
-    current_tribe = tribe(chief_index)
+    current_tribe = tribe(chief_index, **tribe_args)
     return dc_adjacency(current_tribe, chief_index=chief_index, coeff_index=coeff_index)
 
 defined['nonspectral_params']['dc'].append('dc_adjacency(matrix, chief_index=0, coeff_index=2)')
@@ -435,10 +474,10 @@ def dc_adjacency(matrix, chief_index=0, coeff_index=2):
 defined['nonspectral_params']['nbc']=[]
 
 defined['nonspectral_params']['nbc'].append('nbc(chief_index)')
-def nbc(chief_index):
+def nbc(chief_index, tribe_args={}):
 #  in: index
 # out: float
-    current_tribe = tribe(chief_index)
+    current_tribe = tribe(chief_index, **tribe_args)
     return nbc_adjacency(current_tribe, chief_index=chief_index)
 
 defined['nonspectral_params']['nbc'].append('nbc_adjacency(matrix, chief_index=0)')
@@ -461,8 +500,8 @@ defined['nonspectral_params']['degree']=[]
 
 # tribe size
 defined['nonspectral_params']['degree'].append('tribe_size(chief_index)')
-def tribe_size(chief_index):
-    current_tribe = tribe(chief_index)
+def tribe_size(chief_index, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
     return tribe_size_adjacency(current_tribe)
 
 defined['nonspectral_params']['degree'].append('tribe_size_adjacency(matrix)')
@@ -472,8 +511,8 @@ def tribe_size_adjacency(matrix):
 
 # degree
 defined['nonspectral_params']['degree'].append('degree(chief_index, vertex_index=0)')
-def degree(chief_index, vertex_index=0):
-    current_tribe = tribe(chief_index)
+def degree(chief_index, vertex_index=0, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
     return degree_adjacency(matrix, vertex_index=vertex_index)
 
 defined['nonspectral_params']['degree'].append('degree_adjacency(matrix, vertex_index=0)')
@@ -483,8 +522,8 @@ def degree_adjacency(matrix, vertex_index=0):
 
 # in-degree
 defined['nonspectral_params']['degree'].append('in_degree(chief_index, vertex_index=0)')
-def in_degree(chief_index, vertex_index=0):
-    current_tribe = tribe(chief_index)
+def in_degree(chief_index, vertex_index=0, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
     return in_degree_adjacency(current_tribe, vertex_index=vertex_index)
 
 defined['nonspectral_params']['degree'].append('in_degree_adjacency(matrix, vertex_index=0)')
@@ -494,8 +533,8 @@ def in_degree_adjacency(matrix, vertex_index=0):
 
 # out-degree
 defined['nonspectral_params']['degree'].append('out_degree(chief_index, vertex_index=0)')
-def out_degree(chief_index, vertex_index=0):
-    current_tribe = tribe(chief_index)
+def out_degree(chief_index, vertex_index=0, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
     return out_degree_adjacency(current_tribe, vertex_index=vertex_index)
 
 defined['nonspectral_params']['degree'].append('out_degree_adjacency(matrix, vertex_index=0)')
@@ -505,8 +544,8 @@ def out_degree_adjacency(matrix, vertex_index=0):
 
 # reciprocal connections
 defined['nonspectral_params']['degree'].append('reciprocal_connections(chief_index, chief_only=False)')
-def reciprocal_connections(chief_index, chief_only=False):
-    current_tribe = tribe(chief_index)
+def reciprocal_connections(chief_index, chief_only=False, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
     return reciprocal_connections_adjacency(current_tribe, chief_only=chief_only)
 
 defined['nonspectral_params']['degree'].append('reciprocal_connections_adjacency(matrix, chief_only=False)')
@@ -517,7 +556,47 @@ def reciprocal_connections_adjacency(matrix, chief_only=False):
         rc_count = np.count_nonzero(np.multiply(matrix,np.transpose(matrix)))//2
     return rc_count
 
+def number_of_n_degree_nodes(chief_index, n=0, which='sum', tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
+    if which == 'sum':
+        return np.sum(np.sum(current_tribe, axis=1) + np.sum(current_tribe, axis=0) == n)
+    elif which == 'in':
+        return np.sum(np.sum(current_tribe, axis=1) == n)
+    elif which == 'out':
+        return np.sum(np.sum(current_tribe, axis=0) == n)
+    else:
+        raise ValueError
 
+def average_degree(chief_index, which='sum', tribe_args={}):
+    current_tribe, vertices = tribe(chief_index, return_vertices=True, **tribe_args)
+    if which == 'sum':
+        return np.mean(np.sum(adj[vertices,:], axis=1)) + np.mean(np.sum(adj[:,vertices], axis=0))
+    elif which == 'in':
+        return np.mean(np.sum(adj[vertices,:], axis=1))
+    elif which == 'out':
+        return np.mean(np.sum(adj[:,vertices], axis=0))
+    else:
+        raise ValueError
+
+def average_in_tribe_indegree(chief_index, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
+    return np.mean(np.sum(current_tribe, axis=1))
+
+def edge_boundary(chief_index, tribe_args={}):
+    current_tribe, vertices = tribe(chief_index, return_vertices=True, **tribe_args)
+    return np.sum(adj[:, vertices]) + np.sum(adj[vertices, :]) - 2*np.sum(current_tribe)
+
+def edge_volume(chief_index, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
+    return np.sum(current_tribe)
+
+def cell_counts(chief_index, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
+    return flagser_count(current_tribe)['cell_counts']
+
+def connected_components(chief_index, tribe_args={}):
+    current_tribe = tribe(chief_index, **tribe_args)
+    return csgraph.connected_components(current_tribe)
 ##
 ## SPECTRAL PARAMETER FUNCTIONS
 ##
@@ -526,17 +605,17 @@ def reciprocal_connections_adjacency(matrix, chief_only=False):
 defined['spectral_params']['asg']=[]
 
 defined['spectral_params']['asg'].append('asg(chief_index, gap=\'high\')')
-def asg(chief_index, gap='high'):
+def asg(chief_index, gap='high', tribe_args={}):
 #  in: index
 # out: float
-    current_tribe = tribe(chief_index)
+    current_tribe = tribe(chief_index, **tribe_args)
     return asg_adjacency(current_tribe, gap=gap)
 
 defined['spectral_params']['asg'].append('asg_radius(chief_index)')
-def asg_radius(index):
+def asg_radius(index, tribe_args={}):
 #  in: index
 # out: float
-    return spectral_gap(tribe(index),param='radius')
+    return spectral_gap(tribe(index, **tribe_args),param='radius')
 
 defined['spectral_params']['asg'].append('asg_adjacency(matrix, gap=\'high\')')
 def asg_adjacency(matrix, gap='high'):
@@ -547,17 +626,17 @@ def asg_adjacency(matrix, gap='high'):
 defined['spectral_params']['tpsg']=[]
 
 defined['spectral_params']['tpsg'].append('tpsg(chief_index, in_deg=False, gap=\'high\')')
-def tpsg(chief_index, in_deg=False, gap='high'):
+def tpsg(chief_index, in_deg=False, gap='high', tribe_args={}):
 #  in: index
 # out: float
-    current_tribe = tribe(chief_index)
+    current_tribe = tribe(chief_index, **tribe_args)
     return tpsg_adjacency(current_tribe, in_deg=in_deg, gap=gap)
 
 defined['spectral_params']['tpsg'].append('tpsg_radius(chief_index, in_deg=False)')
-def tpsg_radius(index, in_deg=False):
+def tpsg_radius(index, in_deg=False, tribe_args={}):
 #  in: index
 # out: float
-    return spectral_gap(tps_matrix(tribe(index), in_deg=in_deg),param='radius')
+    return spectral_gap(tps_matrix(tribe(index, **tribe_args), in_deg=in_deg),param='radius')
 
 
 defined['spectral_params']['tpsg'].append('tpsg_adjacency(matrix, in_deg=False, gap=\'high\')')
@@ -586,17 +665,17 @@ def tps_matrix(matrix, in_deg=False):
 defined['spectral_params']['clsg']=[]
 
 defined['spectral_params']['clsg'].append('clsg(chief_index, gap=\'low\')')
-def clsg(chief_index, gap='low'):
+def clsg(chief_index, gap='low', tribe_args={}):
 #  in: index
 # out: float
-    current_tribe = tribe(chief_index)
+    current_tribe = tribe(chief_index, **tribe_args)
     return clsg_adjacency(current_tribe, is_strongly_conn=False, gap=gap)
 
 defined['spectral_params']['clsg'].append('clsg_radius(chief_index)')
-def clsg_radius(index, gap='low'):
+def clsg_radius(index, gap='low', tribe_args={}):
 #  in: index
 # out: float
-    return spectral_gap(cls_matrix_fromadjacency(tribe(index)),param='radius')
+    return spectral_gap(cls_matrix_fromadjacency(tribe(index, **tribe_args)),param='radius')
 
 defined['spectral_params']['clsg'].append('clsg_adjacency(matrix, is_strongly_conn=False, gap=\'low\')')
 def clsg_adjacency(matrix, is_strongly_conn=False, gap='low'):
@@ -641,10 +720,10 @@ def cls_matrix_fromdigraph(digraph, matrix=np.array([]), matrix_given=False, is_
 defined['spectral_params']['blsg']=[]
 
 defined['spectral_params']['blsg'].append('blsg(chief_index, reverse_flow=False, gap=\'high\')')
-def blsg(chief_index, reverse_flow=False, gap='high'):
+def blsg(chief_index, reverse_flow=False, gap='high', tribe_args={}):
 #  in: index
 # out: float
-    current_tribe = tribe(chief_index)
+    current_tribe = tribe(chief_index, **tribe_args)
     return blsg_adjacency(current_tribe, reverse_flow=reverse_flow, gap=gap)
 
 defined['spectral_params']['blsg'].append('blsg_radius(chief_index, reverse_flow=False)')
