@@ -22,6 +22,7 @@ import pyflagser
 from pyflagsercontain import compute_cell_count
 from pyflagsercount import flagser_count
 defined = {'data':{}, 'data_funcs':[], 'helper':[], 'nonspectral_params':{}, 'spectral_params':{}}
+import pickle
 
 # Set working directories
 #dir_export = config_dict['paths']['export_address']
@@ -29,8 +30,9 @@ defined = {'data':{}, 'data_funcs':[], 'helper':[], 'nonspectral_params':{}, 'sp
 # Load adjacency matrix
 #print('Loading circuit',flush=True)
 adj = load_npz("/gpfs/bbp.cscs.ch/project/proj9/bisimplices/santoro/TriDy/data/mc2.npz").toarray().astype(int)
+badj = np.multiply(adj, adj.T)
 #defined['data']['adj'] = 'adjacency matrix'
-
+ndata = pickle.load(open("neuron_data_O1_col2", 'rb'))
 
 # Dictionary of all parameters which can be considered
 print('Loading parameters',flush=True)
@@ -238,22 +240,43 @@ def neighbourhood(v, matrix=adj, which='all'):
     return np.concatenate((np.array([v]),neighbours))
 
 defined['helper'].append('tribe(v, neuron_restriction, biggest_cc)')
-def tribe(v, matrix=adj, exclude_chief=False, neuron_restriction=None, restrict_to_biggest_cc=False, which='all', return_vertices=False):
+def tribe(v, matrix=adj, exclude_chief=False, neuron_restriction=None, restrict_to_biggest_cc=False, which='all', return_vertices=False, fake_tribe=False, fake_generator=None, fake_layer_profile=False):
 #  In: index
 # Out: adjacency matrix
+    if fake_generator is None:
+        fake_generator = np.random.Generator(np.random.PCG64(0))
     nhbd = neighbourhood(v, which=which)
     if exclude_chief:
         nhbd = nhbd[1:]
-    if neuron_restriction is not None:
-        nhbd = np.array(np.intersect1d(nhbd, neuron_restriction))
+    if neuron_restriction is None:
+        neuron_restriction = np.arange(adj.shape[0])
+    nhbd = np.array(np.intersect1d(nhbd, neuron_restriction))
+    if restrict_to_biggest_cc:
+        m, vertices = biggest_cc(matrix[np.ix_(nhbd, nhbd)], return_vertices=True)
+        nhbd = nhbd[vertices]
+    else:
+        m = matrix[np.ix_(nhbd, nhbd)]
+    if fake_tribe:
+        if fake_layer_profile:
+            neuron_restriction_layers = ndata.iloc[neuron_restriction]['layer']
+            layer_counts = np.unique(ndata.iloc[nhbd]['layer'], return_counts=True)
+            nhbds = []
+            for layer, value in zip(*layer_counts):
+                neuron_pool = neuron_restriction[neuron_restriction_layers == layer]
+                layer_neurons = fake_generator.choice(neuron_pool, size=value, replace=False)
+                nhbds.append(layer_neurons)
+            try:
+                nhbd = np.concatenate(nhbds)
+            except ValueError: #empty tribe
+                nhbd = []
+            m = adj[nhbd].T[nhbd].T
+        else:
+            nhbd = fake_generator.choice(neuron_restriction, size=len(nhbd), replace=False)
+            m = adj[nhbd].T[nhbd].T
     if return_vertices:
-         if restrict_to_biggest_cc:
-             m, vertices = biggest_cc(matrix[np.ix_(nhbd, nhbd)], return_vertices=True)
-             nhbd = nhbd[vertices]
-         else:
-             m = matrix[np.ix_(nhbd, nhbd)]
-         return m, nhbd
-    return matrix[np.ix_(nhbd,nhbd)] if not restrict_to_biggest_cc else biggest_cc(matrix[np.ix_(nhbd, nhbd)])
+        return m, nhbd
+    else:
+        return m
 
 defined['helper'].append('biggest_cc(m)')
 def biggest_cc(m, return_vertices = False):
@@ -571,9 +594,9 @@ def average_degree(chief_index, which='sum', tribe_args={}):
     current_tribe, vertices = tribe(chief_index, return_vertices=True, **tribe_args)
     if which == 'sum':
         return np.mean(np.sum(adj[vertices,:], axis=1)) + np.mean(np.sum(adj[:,vertices], axis=0))
-    elif which == 'in':
-        return np.mean(np.sum(adj[vertices,:], axis=1))
     elif which == 'out':
+        return np.mean(np.sum(adj[vertices,:], axis=1))
+    elif which == 'in':
         return np.mean(np.sum(adj[:,vertices], axis=0))
     else:
         raise ValueError
@@ -582,9 +605,25 @@ def average_in_tribe_indegree(chief_index, tribe_args={}):
     current_tribe = tribe(chief_index, **tribe_args)
     return np.mean(np.sum(current_tribe, axis=1))
 
-def edge_boundary(chief_index, tribe_args={}):
+def edge_boundary(chief_index, tribe_args={}, which='all', reciprocal=False):
     current_tribe, vertices = tribe(chief_index, return_vertices=True, **tribe_args)
-    return np.sum(adj[:, vertices]) + np.sum(adj[vertices, :]) - 2*np.sum(current_tribe)
+    if reciprocal:
+        m = badj
+        if which != 'all':
+            raise ValueError("Reciprocal requires the all option")
+    else:
+        m = adj
+    if which=='all':
+        if reciprocal:
+            return np.sum(m[:, vertices]) + np.sum(m[vertices, :]) - 2*np.sum(np.multiply(current_tribe, current_tribe.T))
+        else:
+            return np.sum(m[:, vertices]) + np.sum(m[vertices, :]) - 2*np.sum(current_tribe)
+    elif which=='in':
+        return np.sum(m[:, vertices]) - np.sum(current_tribe)
+    elif which=='out':
+        return np.sum(m[vertices, :]) - np.sum(current_tribe)
+    else:
+        raise ValueError("Edge boundary kind not recognized")
 
 def edge_volume(chief_index, tribe_args={}):
     current_tribe = tribe(chief_index, **tribe_args)
