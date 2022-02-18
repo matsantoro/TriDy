@@ -674,6 +674,18 @@ def cell_counts(chief_index, tribe_args={}):
 def connected_components(chief_index, tribe_args={}):
     current_tribe = tribe(chief_index, **tribe_args)
     return csgraph.connected_components(current_tribe)
+
+def in_between(chief_index, tribe_args={}, from_tribe=False):
+    if not tribe_args['second_degree_tribe']:
+        raise ValueError
+    tribe_args['return_vertices'] = True
+    sdt = tribe(chief_index, **tribe_args)[1]
+    tribe_args['second_degree_tribe'] = False
+    t1 = tribe(chief_index, **tribe_args)[1]
+    if from_tribe:
+        return np.sum(adj[t1,:][:, sdt])
+    else:
+        return np.sum(adj[sdt,:][:, t1])
 ##
 ## SPECTRAL PARAMETER FUNCTIONS
 ##
