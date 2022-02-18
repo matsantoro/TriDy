@@ -31,7 +31,7 @@ import pickle
 #print('Loading circuit',flush=True)
 adj = load_npz("/gpfs/bbp.cscs.ch/project/proj9/bisimplices/santoro/TriDy/data/mc2.npz").toarray().astype(int)
 badj = np.multiply(adj, adj.T)
-#defined['data']['adj'] = 'adjacency matrix'
+#desfined['data']['adj'] = 'adjacency matrix'
 ndata = pickle.load(open("neuron_data_O1_col2", 'rb'))
 
 # Dictionary of all parameters which can be considered
@@ -240,8 +240,9 @@ def neighbourhood(v, matrix=adj, which='all'):
     return np.concatenate((np.array([v]),neighbours))
 
 defined['helper'].append('tribe(v, neuron_restriction, biggest_cc)')
-def tribe(v, matrix=adj, exclude_chief=False, neuron_restriction=None, restrict_to_biggest_cc=False, which='all', return_vertices=False, fake_tribe=False, fake_generator=None, fake_layer_profile=False):
+def tribe(v, matrix=adj, exclude_chief=False, neuron_restriction=None, restrict_to_biggest_cc=False, which='all', return_vertices=False, fake_tribe=False, fake_generator=None, fake_layer_profile=False, second_degree_tribe=False, second_degree_kind="in"):
 #  In: index
+# second_degree_kind = in, out, intersection, union, difference_1, difference_2
 # Out: adjacency matrix
     if fake_generator is None:
         fake_generator = np.random.Generator(np.random.PCG64(0))
@@ -273,11 +274,46 @@ def tribe(v, matrix=adj, exclude_chief=False, neuron_restriction=None, restrict_
         else:
             nhbd = fake_generator.choice(neuron_restriction, size=len(nhbd), replace=False)
             m = adj[nhbd].T[nhbd].T
+    if second_degree_tribe:
+        m, nhbd = second_tribe(nhbd, which = second_degree_kind)
     if return_vertices:
         return m, nhbd
     else:
         return m
 
+def second_tribe(nhbd, which):
+    if which == "in":
+        selection = np.nonzero(np.sum(adj.T[nhbd].T, axis=1))[0]
+    elif which == "out":
+        selection = np.nonzero(np.sum(adj[nhbd], axis=0))[0]
+    elif which == "intersection":
+        selection = np.intersect1d(
+            np.nonzero(np.sum(adj.T[nhbd].T, axis=1))[0],
+            np.nonzero(np.sum(adj[nhbd], axis=0))[0],
+            assume_unique = True
+        )
+    elif which == "union":
+        selection = np.union1d(
+            np.nonzero(np.sum(adj.T[nhbd].T, axis=1))[0],
+            np.nonzero(np.sum(adj[nhbd], axis=0))[0]
+        )
+    elif which == "difference_1":
+        selection = np.setdiff1d(
+            np.nonzero(np.sum(adj.T[nhbd].T, axis=1))[0],
+            np.nonzero(np.sum(adj[nhbd], axis=0))[0],
+            assume_unique = True
+        )
+    elif which == "difference_2":
+        selection = np.setdiff1d(
+            np.nonzero(np.sum(adj[nhbd], axis=0))[0],
+            np.nonzero(np.sum(adj.T[nhbd].T, axis=1))[0],
+            assume_unique = True
+        )
+    else:
+        raise NotIimplementedError
+    selection = np.setdiff1d(selection, nhbd, assume_unique = True)
+    return adj[selection,:][:, selection], selection
+    
 defined['helper'].append('biggest_cc(m)')
 def biggest_cc(m, return_vertices = False):
 # In: matrix
@@ -625,8 +661,10 @@ def edge_boundary(chief_index, tribe_args={}, which='all', reciprocal=False):
     else:
         raise ValueError("Edge boundary kind not recognized")
 
-def edge_volume(chief_index, tribe_args={}):
+def edge_volume(chief_index, tribe_args={}, reciprocal=False):
     current_tribe = tribe(chief_index, **tribe_args)
+    if reciprocal:
+        return np.sum(np.multiply(current_tribe, current_tribe.T))
     return np.sum(current_tribe)
 
 def cell_counts(chief_index, tribe_args={}):
